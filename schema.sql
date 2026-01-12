@@ -28,8 +28,6 @@ CREATE TABLE IF NOT EXISTS fiscal_data (
     created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
 );
 
--- a
-
 -- 3. Table: tax_rules (Regras e Alíquotas)
 CREATE TABLE IF NOT EXISTS tax_rules (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

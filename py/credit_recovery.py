@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 import tempfile
 
 # Import Modules
-from py.tax_engine import TaxEngine
-from py.legal_advisor import LegalAdvisor
+from tax_engine import TaxEngine
+from legal_advisor import LegalAdvisor
 
 # --- Constants & Config ---
 # Paleta de Cores Institucionais
@@ -63,21 +63,22 @@ class PDFReportGenerator(FPDF):
         # Placeholder Logotipo (Fundo Branco para contraste se tiver logo)
         # Caminho do logo: substituir 'logo.png' pelo arquivo real se existir
         if os.path.exists('logo.png'):
-            self.image('logo.png', x=150, y=10, w=40)
+            # Centralizado: (210 - 40) / 2 = 85
+            self.image('logo.png', x=85, y=20, w=40)
         else:
             # Placeholder visual se não tiver imagem
             self.set_fill_color(255, 255, 255)
-            self.circle(180, 30, 15, 'F')
+            self.circle(105, 40, 15, 'F')
         
         self.set_text_color(255, 255, 255)
         self.ln(80)
         
         # Título Principal
         self.set_font("Arial", 'B', 28)
-        self.multi_cell(0, 12, "Relatório de Diagnóstico Fiscal\ne Recuperação de Créditos", 0, 'L')
+        self.multi_cell(0, 12, "Relatório de Diagnóstico Fiscal\ne Recuperação de Créditos", 0, 'C')
         self.ln(10)
         self.set_font("Arial", '', 14)
-        self.cell(0, 10, "Auditoria de Inteligência Artificial", 0, 1, 'L')
+        self.cell(0, 10, "Auditoria de Inteligência Artificial", 0, 1, 'C')
         
         # Detalhes do Cliente (Rodapé da Capa)
         self.set_y(220)

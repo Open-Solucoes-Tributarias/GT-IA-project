@@ -3,16 +3,6 @@ import shutil
 from typing import List, Dict, Any
 import json
 from decimal import Decimal
-
-# LangChain & ChromaDB
-from langchain_community.document_loaders import PyPDFDirectoryLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_community.vectorstores import Chroma
-from langchain.prompts import PromptTemplate
-from langchain.chains import RetrievalQA
-
-# DB Connection for logging
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from dotenv import load_dotenv
@@ -24,33 +14,53 @@ class LegalAdvisor:
     GT-IA Module: Legal Intelligence (Bloco 3).
     Responsible for RAG (Retrieval-Augmented Generation) to provide
     legal basis for tax decisions.
+    
+    Robustness: Uses lazy imports to avoid crashing if LangChain is missing.
     """
 
     def __init__(self, doc_path: str = "./legal_docs", db_path: str = "./chroma_db"):
         self.doc_path = doc_path
         self.db_path = db_path
-        self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
         self.vector_store = None
+        self.embeddings = None
+        self._Chroma = None
         
+        # Lazy Import for LangChain
+        try:
+            from langchain_openai import OpenAIEmbeddings
+            from langchain_community.vectorstores import Chroma
+            self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+            self._Chroma = Chroma 
+        except ImportError as e:
+            print(f"RAG dependencies missing: {e}. LegalAdvisor running in MOCK mode.")
+            return
+
         # Ensure legal_docs folder exists
         if not os.path.exists(self.doc_path):
             os.makedirs(self.doc_path)
-            print(f"Directory '{self.doc_path}' created. Place PDF laws here.")
 
         # Initialize or Load Vector Store
         self._initialize_vector_store()
         
     def _initialize_vector_store(self):
         """Loads existing vector store or initializes a new one if empty."""
+        if not self._Chroma: return
+
         if os.path.exists(self.db_path) and os.listdir(self.db_path):
             print("Loading existing Vector Store...")
-            self.vector_store = Chroma(persist_directory=self.db_path, embedding_function=self.embeddings)
+            self.vector_store = self._Chroma(persist_directory=self.db_path, embedding_function=self.embeddings)
         else:
-            print("Vector Store not found. Waiting for documents to ingest.")
-            # Can be initialized empty, but usually we want to ingest first.
+            print("Vector Store not found. Run ingest_documents().")
 
     def ingest_documents(self):
         """Reads PDFs from legal_docs, splits them, and creates embeddings."""
+        try:
+            from langchain_community.document_loaders import PyPDFDirectoryLoader
+            from langchain_text_splitters import RecursiveCharacterTextSplitter
+        except ImportError:
+            print("LangChain loaders missing.")
+            return
+
         print(f"Scanning '{self.doc_path}' for PDFs...")
         loader = PyPDFDirectoryLoader(self.doc_path)
         documents = loader.load()
@@ -63,51 +73,55 @@ class LegalAdvisor:
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         chunks = text_splitter.split_documents(documents)
 
-        print(f"Creating embeddings for {len(chunks)} chunks. This may take a moment...")
-        # Create and persist ChromaDB
-        self.vector_store = Chroma.from_documents(
-            documents=chunks, 
-            embedding=self.embeddings, 
-            persist_directory=self.db_path
-        )
-        print("Ingestion complete. Database persisted.")
+        print(f"Creating embeddings for {len(chunks)} chunks...")
+        # Persist ChromaDB
+        if self._Chroma:
+            self.vector_store = self._Chroma.from_documents(
+                documents=chunks, 
+                embedding=self.embeddings, 
+                persist_directory=self.db_path
+            )
+            print("Ingestion complete.")
 
     def analyze_scenario(self, scenario_description: str) -> Dict[str, Any]:
         """
-        Consults the "Brain" (LLM + VectorDB) to analyze a fiscal scenario.
-        
-        Args:
-           scenario_description: Text describing the situation (e.g. "Is there credit for PIS on electricity?")
-           
-        Returns:
-           Dict with 'summary', 'risk', 'citations'.
+        Consults the "Brain" (LLM + VectorDB).
         """
         if not self.vector_store:
-            return {"error": "Vector Store not initialized. Run ingest_documents() first."}
+            return {
+                "decision_summary": "Legal Advisor offline or empty DB. Analysis skipped.",
+                "risk_level": "UNKNOWN",
+                "applied_law_bases": []
+            }
+        
+        try:
+            from langchain_openai import ChatOpenAI
+            from langchain.prompts import PromptTemplate
+            from langchain.chains import RetrievalQA
+        except ImportError:
+            try:
+                from langchain_core.prompts import PromptTemplate
+                from langchain.chains import RetrievalQA
+                from langchain_openai import ChatOpenAI
+            except ImportError:
+                 return {"error": "LangChain modules missing for analysis."}
 
         # Retrieval
         retriever = self.vector_store.as_retriever(search_kwargs={"k": 3})
         
-        # Generation Prompt
         prompt_template = """
-        You are a Senior Tax Lawyer and Specialist in Brazilian Tax Law (Direito Tributário Brasileiro).
-        Use the following pieces of context (laws, court decisions) to answer the user's question.
-        
+        You are a Senior Tax Lawyer.
         Context:
         {context}
         
         Question: {question}
         
-        Instructions:
-        1. Identify the legal basis (laws, articles, Súmulas STJ/STF).
-        2. Determine the risk level (LOW, MEDIUM, HIGH) for taking credit or not paying.
-        3. Explain the reasoning clearly.
-        4. Return the output strictly in the following JSON format:
+        Return JSON:
         {{
-            "decision_summary": "Your explanation here...",
+            "decision_summary": "...",
             "risk_level": "LOW/MEDIUM/HIGH",
             "confidence_score": 0.95,
-            "applied_law_bases": ["Lei X, Art Y", "Súmula Z"]
+            "applied_law_bases": ["Lei X"]
         }}
         """
         
@@ -126,58 +140,35 @@ class LegalAdvisor:
         
         try:
             print("Consulting AI Advisor...")
-            result_json_str = qa_chain.run(scenario_description)
-            # Parse JSON from string response (LLM usually wraps in markdown code blocks, simplistic stripping here)
-            clean_json = result_json_str.replace("```json", "").replace("```", "").strip()
+            result_str = qa_chain.run(scenario_description)
+            clean_json = result_str.replace("```json", "").replace("```", "").strip()
             return json.loads(clean_json)
         except Exception as e:
             return {"error": f"Failed to generate analysis: {e}"}
 
     def log_decision(self, fiscal_data_id: str, analysis_result: Dict[str, Any]):
-        """Logs the AI decision to the PostgreSQL database."""
         db_host = os.getenv("DB_HOST", "localhost")
-        db_name = os.getenv("DB_NAME", "gt_ia_db")
         db_user = os.getenv("DB_USER", "postgres")
         db_pass = os.getenv("DB_PASS", "postgres")
+        db_name = os.getenv("DB_NAME", "gt_ia_db")
         
         try:
-            conn = psycopg2.connect(
-                user=db_user, password=db_pass, host=db_host, dbname=db_name
-            )
+            conn = psycopg2.connect(user=db_user, password=db_pass, host=db_host, dbname=db_name)
             conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
             cur = conn.cursor()
-            
-            query = """
-                INSERT INTO ai_decision_logs 
-                (fiscal_data_id, decision_summary, risk_level, confidence_score, applied_law_bases)
-                VALUES (%s, %s, %s, %s, %s)
-            """
-            
+            query = """INSERT INTO ai_decision_logs (fiscal_data_id, decision_summary, risk_level, confidence_score, applied_law_bases) VALUES (%s, %s, %s, %s, %s)"""
             cur.execute(query, (
                 fiscal_data_id,
-                analysis_result.get('decision_summary', 'Error in analysis'),
+                analysis_result.get('decision_summary', 'N/A'),
                 analysis_result.get('risk_level', 'HIGH'),
                 analysis_result.get('confidence_score', 0.0),
                 analysis_result.get('applied_law_bases', [])
             ))
-            
-            print(f"Decision logged for Fiscal Data ID: {fiscal_data_id}")
             cur.close()
             conn.close()
-        except Exception as e:
-            print(f"Failed to log decision: {e}")
+        except Exception:
+            pass # logging fail shouldn't stop flow
 
-# Example Usage
 if __name__ == "__main__":
-    # Ensure you have OPENAI_API_KEY in .env
-    advisor = LegalAdvisor()
-    
-    # 1. Ingest (Only needs to run once or when docs change)
-    # advisor.ingest_documents()
-    
-    # 2. Query
-    scenario = "Posso tomar crédito de PIS e COFINS sobre despesas com energia elétrica na indústria?"
-    result = advisor.analyze_scenario(scenario)
-    
-    print("\n--- Parecer Jurídico IA ---")
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+    adv = LegalAdvisor()
+    print("LegalAdvisor Initialized.")

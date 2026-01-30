@@ -8,3 +8,7 @@ psycopg2-binary
 pandas
 fpdf
 matplotlib
+fastapi
+uvicorn
+python-multipart
+pydantic

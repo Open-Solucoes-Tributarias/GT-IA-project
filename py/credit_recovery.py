@@ -67,8 +67,8 @@ class PDFReportGenerator(FPDF):
             self.image('logo.png', x=85, y=20, w=40)
         else:
             # Placeholder visual se não tiver imagem
-            self.set_fill_color(255, 255, 255)
-            self.circle(105, 40, 15, 'F')
+            self.set_fill_color(200, 200, 200)
+            self.rect(105, 40, 30, 30, 'F')
         
         self.set_text_color(255, 255, 255)
         self.ln(80)

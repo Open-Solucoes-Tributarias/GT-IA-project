@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GT-IA | Inteligência Tributária</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+    <!-- Font Awesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+
+<body>
+
+    <!-- Header -->
+    <header>
+        <div class="container header-content">
+            <div class="logo">
+                <i class="fa-solid fa-brain"></i> GT-IA
+            </div>
+            <nav>
+                <span id="api-status" class="status-badge"><i class="fa-solid fa-circle-notch fa-spin"></i> Verificando
+                    API...</span>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="container">
+
+        <!-- Hero Section -->
+        <section id="hero" class="hero-section">
+            <div class="hero-text">
+                <h1>Auditoria Fiscal com Inteligência Artificial</h1>
+                <p>Otimize sua carga tributária com a precisão do GT-IA. Análise completa de riscos e oportunidades em
+                    segundos.</p>
+                <button id="btn-start" class="btn-primary">Nova Análise <i class="fa-solid fa-arrow-right"></i></button>
+            </div>
+            <div class="hero-visual">
+                <!-- Abstract visual representation -->
+                <div class="scanner-anim"></div>
+            </div>
+        </section>
+
+        <!-- Analysis Form (Hidden initially) -->
+        <section id="analysis-form" class="form-section hidden">
+            <div class="section-header">
+                <h2><i class="fa-solid fa-file-invoice-dollar"></i> Dados da Empresa</h2>
+                <p>Preencha as informações ou faça upload de um arquivo CSV.</p>
+            </div>
+
+            <!-- CSV Upload Area -->
+            <div class="upload-area" id="drop-zone">
+                <i class="fa-solid fa-cloud-arrow-up"></i>
+                <h3>Upload de Dados em Massa (CSV)</h3>
+                <p>Arraste seu arquivo aqui ou clique para selecionar</p>
+
+                <div class="template-download">
+                    <a href="/download-template" class="link-small"><i class="fa-solid fa-download"></i> Baixar Modelo
+                        de Planilha</a>
+                </div>
+
+                <input type="file" id="csv-file" accept=".csv" hidden>
+                <button type="button" id="btn-select-file" class="btn-secondary">Selecionar Arquivo</button>
+                <p class="file-info" id="file-name"></p>
+            </div>
+
+            <div class="divider-text">OU PREENCHIMENTO MANUAL</div>
+
+            <form id="audit-form">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Nome da Empresa</label>
+                        <input type="text" id="company_name" placeholder="Ex: Minha Empresa Ltda" required>
+                    </div>
+                    <div class="form-group">
+                        <label>CNPJ</label>
+                        <input type="text" id="company_cnpj" placeholder="00.000.000/0001-00" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Regime Tributário</label>
+                        <select id="company_regime">
+                            <option value="LUCRO_PRESUMIDO">Lucro Presumido</option>
+                            <option value="LUCRO_REAL">Lucro Real</option>
+                            <option value="SIMPLES_NACIONAL">Simples Nacional</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>CNAE Principal</label>
+                        <input type="text" id="company_activity" placeholder="Ex: 62000" required>
+                    </div>
+                </div>
+
+                <div class="section-divider">
+                    <h3><i class="fa-solid fa-calendar-check"></i> Dados do Período (Último Mês)</h3>
+                </div>
+
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Faturamento (R$)</label>
+                        <input type="number" id="fiscal_revenue" placeholder="0.00" step="0.01">
+                    </div>
+                    <div class="form-group">
+                        <label>Folha de Pagamento (R$)</label>
+                        <input type="number" id="fiscal_payroll" placeholder="0.00" step="0.01">
+                    </div>
+                    <div class="form-group">
+                        <label>Impostos Pagos (R$)</label>
+                        <input type="number" id="fiscal_paid" placeholder="0.00" step="0.01">
+                    </div>
+                </div>
+
+                <div class="form-group full-width">
+                    <label>Custos Operacionais (Detalhados para Crédito)</label>
+                    <div class="costs-grid">
+                        <input type="number" id="cost_energy" placeholder="Energia (R$)" step="0.01">
+                        <input type="number" id="cost_supplies" placeholder="Insumos (R$)" step="0.01">
+                        <input type="number" id="cost_rent" placeholder="Aluguéis (R$)" step="0.01">
+                        <input type="number" id="cost_machines" placeholder="Máquinas (R$)" step="0.01">
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" id="btn-cancel" class="btn-secondary">Cancelar</button>
+                    <button type="submit" class="btn-primary">Executar Auditoria <i
+                            class="fa-solid fa-bolt"></i></button>
+                </div>
+            </form>
+        </section>
+
+        <!-- Loading Overlay (AI Processing) -->
+        <div id="ai-processing" class="overlay hidden">
+            <div class="processing-content">
+                <div class="spinner"></div>
+                <h3>GT-IA Trabalhando...</h3>
+                <p id="process-step">Inicializando...</p>
+                <ul class="process-steps">
+                    <li id="step-1"><i class="fa-regular fa-circle"></i> Analisando Regime Tributário</li>
+                    <li id="step-2"><i class="fa-regular fa-circle"></i> Cruzando Legislação (RAG)</li>
+                    <li id="step-3"><i class="fa-regular fa-circle"></i> Calculando Créditos</li>
+                    <li id="step-4"><i class="fa-regular fa-circle"></i> Gerando Relatório Premium</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <section id="results" class="results-section hidden">
+            <div class="section-header center">
+                <i class="fa-solid fa-check-circle success-icon"></i>
+                <h2>Análise Concluída</h2>
+                <p>Confira o resumo das oportunidades identificadas.</p>
+            </div>
+
+            <div class="cards-container">
+                <div class="card savings-card">
+                    <h3>Potencial de Economia</h3>
+                    <div class="value" id="result-savings">R$ 0,00</div>
+                    <p>Valor total recuperável estimado</p>
+                </div>
+                <div class="card opportunities-card">
+                    <h3>Oportunidades</h3>
+                    <div class="value" id="result-count">0</div>
+                    <p>Pontos de melhoria detectados</p>
+                </div>
+            </div>
+
+            <div class="download-area">
+                <p>O relatório detalhado contém fundamentação jurídica, gráficos e matriz de risco.</p>
+                <a id="btn-download" href="#" target="_blank" class="btn-download">
+                    <i class="fa-solid fa-file-pdf"></i> Baixar Relatório Completo (PDF)
+                </a>
+                <button id="btn-new-analysis" class="btn-text">Nova Análise</button>
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="container">
+        <p>&copy; 2026 GT-IA Tecnologia Tributária. Todos os direitos reservados.</p>
+    </footer>
+
+    <script src="js/app.js"></script>
+</body>
+
+</html>

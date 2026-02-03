@@ -26,6 +26,15 @@ def run_test():
     print(f"Opportunities Found: {len(result['opportunities'])}")
     for opp in result['opportunities']:
         print(f"  - {opp['type']}: R$ {opp['value']:,.2f}")
+        
+    print("Generating PDF...")
+    try:
+        agent.generate_report(result, filename="test_report.pdf")
+        print("PDF Generated successfully.")
+    except Exception as e:
+        print(f"PDF Error: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     run_test()

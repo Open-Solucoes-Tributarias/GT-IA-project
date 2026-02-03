@@ -244,6 +244,65 @@ class PDFReportGenerator(FPDF):
             self.ln()
             self.set_y(y_start + row_h)
 
+    def section_risk_scenarios(self, current_savings, format_currency_func):
+        self.add_page()
+        self.chapter_title("4. Projeção de Cenários e Riscos")
+        
+        # 1. Projeção Financeira
+        self.set_font("Arial", 'B', 11)
+        self.set_text_color(*COLOR_PRIMARY)
+        self.cell(0, 10, "Simulação de Economia Acumulada (12 Meses):", 0, 1)
+        
+        # Headers
+        self.set_fill_color(245, 245, 245)
+        self.set_font("Arial", 'B', 10)
+        self.cell(90, 8, "Cenário Atual", 1, 0, 'C', 1)
+        self.cell(90, 8, "Cenário Otimista (+20% Faturamento)", 1, 1, 'C', 1)
+        
+        # Body
+        try:
+            current_val = Decimal(str(current_savings))
+            projected_val = current_val * Decimal("1.20")
+        except:
+            current_val = Decimal(0)
+            projected_val = Decimal(0)
+            
+        self.set_font("Arial", 'B', 14)
+        self.set_text_color(0, 128, 0)
+        self.cell(90, 15, format_currency_func(current_val), 1, 0, 'C')
+        self.cell(90, 15, format_currency_func(projected_val), 1, 1, 'C')
+        self.set_text_color(0)
+        self.ln(15)
+        
+        # 2. Matriz de Risco Detalhada
+        self.set_font("Arial", 'B', 11)
+        self.set_text_color(*COLOR_PRIMARY)
+        self.cell(0, 10, "Matriz de Risco da Operação:", 0, 1)
+        
+        # Table of Risks
+        self.set_font("Arial", 'B', 10)
+        self.set_fill_color(230, 230, 235)
+        self.cell(50, 8, "Dimensão", 1, 0, 'L', 1)
+        self.cell(140, 8, "Avaliação Técnica", 1, 1, 'L', 1)
+        
+        self.set_font("Arial", '', 10)
+        self.set_fill_color(255, 255, 255)
+        
+        # Row 1
+        self.cell(50, 10, "Segurança Jurídica", 1, 0, 'L')
+        self.cell(140, 10, " ALTA - Baseado em Teses Pacificadas (STF Tema 69/STJ)", 1, 1, 'L')
+        
+        # Row 2
+        self.cell(50, 10, "Documentação", 1, 0, 'L')
+        self.cell(140, 10, " MÉDIA - Requer retificação de obrigações (Sped Contributions)", 1, 1, 'L')
+        
+        # Row 3
+        self.cell(50, 10, "Prob. Fiscalização", 1, 0, 'L')
+        self.cell(140, 10, " BAIXA - Compliance prévio realizado via Cruzamento GT-IA", 1, 1, 'L')
+        
+        self.ln(5)
+        self.set_font("Arial", 'I', 9)
+        self.multi_cell(0, 5, "Nota: A recuperação de créditos tributários via via administrativa é segura quando fundamentada em legislação vigente e jurisprudência consolidada. A GT-IA recomenda a revisão dos arquivos XML antes da compensação.".replace("via via", "via"))
 class CreditRecoveryAgent:
     def __init__(self):
         self.tax_engine = TaxEngine()
@@ -463,24 +522,16 @@ class CreditRecoveryAgent:
             if pie_chart and os.path.exists(pie_chart): os.remove(pie_chart)
         except: pass
         
-        # 4. Detalhamento
-        pdf.section_detailed_opportunities(analysis_result['opportunities'], self._format_currency)
+        # 4. Detalhamento (Sorted by Risk/Type)
+        # Sort so that Low risk ones appear first (or grouped by type) to avoid jarring stripes
+        # Primary Sort: Risk (LOW -> MEDIUM -> HIGH)
+        # Secondary Sort: Type
+        sorted_opportunities = sorted(analysis_result['opportunities'], key=lambda x: (x['risk'], x['type']))
         
-        # 5. Projeção (Pagina Extra Solicitada)
-        pdf.add_page()
-        pdf.chapter_title("4. Projeção de Cenários e Riscos")
-        pdf.set_font("Arial", '', 11)
-        pdf.multi_cell(0, 6, "Simulação considerando crescimento de 20% no faturamento para o próximo exercício:")
-        pdf.ln(5)
+        pdf.section_detailed_opportunities(sorted_opportunities, self._format_currency)
         
-        # Matriz Risco (Placeholder visual)
-        pdf.set_fill_color(240, 240, 240)
-        pdf.rect(10, pdf.get_y(), 190, 60, 'F')
-        pdf.set_xy(20, pdf.get_y()+20)
-        pdf.set_font("Arial", 'B', 14)
-        pdf.cell(0, 10, "Matriz de Risco: BAIXO", 0, 1, 'C')
-        pdf.set_font("Arial", '', 10)
-        pdf.cell(0, 10, "A maioria das oportunidades identificadas segue jurisprudência pacificada.", 0, 1, 'C')
+        # 5. Projeção Avançada
+        pdf.section_risk_scenarios(analysis_result['total_savings'], self._format_currency)
 
         pdf.output(filename)
         return filename

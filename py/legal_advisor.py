@@ -3,11 +3,11 @@ import shutil
 from typing import List, Dict, Any
 import json
 from decimal import Decimal
-import psycopg2
-from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+import sqlite3
 from dotenv import load_dotenv
 
 load_dotenv()
+
 
 class LegalAdvisor:
     """
@@ -174,30 +174,39 @@ class LegalAdvisor:
             return {"error": f"Erro Interno Fatal: {str(global_e)}"}
 
     def log_decision(self, fiscal_data_id: str, analysis_result: Dict[str, Any], savings: float = 0.0):
-        db_host = os.getenv("DB_HOST", "localhost")
-        db_user = os.getenv("DB_USER", "postgres")
-        db_pass = os.getenv("DB_PASS", "postgres")
-        db_name = os.getenv("DB_NAME", "gt_ia_db")
-        
+        # Default to SQLite file
+        db_name = os.getenv("DB_NAME", "gt_ia.db")
+        # If DB_NAME is gt_ia_db (old default), switch to .db file for sqlite convenience
+        if db_name == "gt_ia_db": 
+             db_name = "gt_ia.db"
+             
         try:
-            conn = psycopg2.connect(user=db_user, password=db_pass, host=db_host, dbname=db_name)
-            conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+            conn = sqlite3.connect(db_name)
             cur = conn.cursor()
-            query = """INSERT INTO ai_decision_logs (fiscal_data_id, decision_summary, risk_level, confidence_score, applied_law_bases, estimated_savings) VALUES (%s, %s, %s, %s, %s, %s)"""
+            
+            # Serialize list
+            law_bases = analysis_result.get('applied_law_bases', [])
+            if isinstance(law_bases, list):
+                law_bases = json.dumps(law_bases)
+                
+            query = """INSERT INTO ai_decision_logs 
+                       (fiscal_data_id, decision_summary, risk_level, confidence_score, applied_law_bases, estimated_savings) 
+                       VALUES (?, ?, ?, ?, ?, ?)"""
+            
             cur.execute(query, (
                 fiscal_data_id,
                 analysis_result.get('decision_summary', 'Análise Automática'),
-                analysis_result.get('risk_level', 'LOW'), # Default to LOW if analysis didn't run fully
-                analysis_result.get('confidence_score', 1.0),
-                analysis_result.get('applied_law_bases', []),
-                savings
+                analysis_result.get('risk_level', 'LOW'),
+                float(analysis_result.get('confidence_score', 1.0)),
+                str(law_bases),
+                float(savings)
             ))
-            cur.close()
+            conn.commit()
             conn.close()
         except Exception as e:
-            print(f"Log Decision Error: {e}")
+            print(f"Log Decision Error (SQLite): {e}")
         except Exception:
-            pass # logging fail shouldn't stop flow
+            pass
 
 if __name__ == "__main__":
     adv = LegalAdvisor()

@@ -463,13 +463,32 @@ class CreditRecoveryAgent:
             if monofasic_savings > 0:
                 total_savings += monofasic_savings
                 opportunities.append({
-                    'type': 'MONOFASICO',
+                'type': 'MONOFASICO',
                     'period': period,
                     'description': "Segregação de receitas monofásicas (PIS/COFINS recolhido na indústria).",
                     'value': monofasic_savings,
                     'legal_basis': "Lei 10.147/00 (Autopeças/Farmácia/Cosméticos)",
                     'risk': 'MEDIUM' # Requer revisão NCM a NCM
                 })
+            
+            # 3. Credito de PIS/COFINS sobre Marketing (ALTO RISCO)
+            # Mapeamento do main.py: costs['outros'] recebeu 'Custo Marketing'
+            if isinstance(cost_val, dict):
+                 mkt_cost = Decimal(str(cost_val.get('outros', 0)))
+                 if mkt_cost > 0:
+                      # Rate 9.25% (Simulated for Lucro Real potential)
+                      pis_cofins_rate = Decimal("0.0925") if used_regime == 'LUCRO_REAL' else Decimal("0.0365")
+                      mkt_savings = mkt_cost * pis_cofins_rate
+                      if mkt_savings > 100:
+                           total_savings += mkt_savings
+                           opportunities.append({
+                               'type': 'CREDITO_MARKETING',
+                               'period': period,
+                               'description': "Crédito PIS/COFINS sobre despesas de Marketing (Conceito estendido de Insumo - CARF).",
+                               'value': mkt_savings,
+                               'legal_basis': "Tese Jurídica Controvertida (Risco de Glosa)",
+                               'risk': 'HIGH'
+                           })
 
         # Calculate Period Range
         period_str = "Período Desconhecido"

@@ -5,7 +5,6 @@ from typing import List, Dict, Optional, Any
 from datetime import datetime
 import json
 import uuid
-import sqlite3
 
 # FastAPI & Pydantic
 from fastapi import FastAPI, HTTPException, Header, Depends, UploadFile, File, Form
@@ -20,21 +19,29 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import pandas as pd
 import io
+import psycopg2
+from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 # Adjust Path to import modules from 'py' directory
 sys.path.append(os.path.join(os.getcwd(), 'py'))
 
 # Import Project Modules
+# Note: credit_recovery.py inside py/ might import tax_engine using standard import.
+# Adding 'py' to sys.path helps resolve this.
 try:
     from credit_recovery import CreditRecoveryAgent
     from tax_engine import TaxEngine
 except ImportError as e:
     print(f"Error importing modules: {e}")
+    # Fallback/Debug note: Ensure running from project root
 
 # --- Configurations ---
 load_dotenv()
 API_KEY_SECRET = os.getenv("GT_IA_API_KEY", "minha_chave_secreta_padrao")
-DB_NAME = "gt_ia.db" # SQLite File
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASS = os.getenv("DB_PASS", "postgres")
+DB_NAME = os.getenv("DB_NAME", "gt_ia_db")
 
 app = FastAPI(
     title="GT-IA Tax Intelligence API",
@@ -43,7 +50,14 @@ app = FastAPI(
 )
 
 # --- CORS ---
-origins = ["*"]
+origins = [
+    "http://localhost",
+    "http://localhost:3000",
+    "http://meusiteatual.com.br", # Adicione o domínio do seu site aqui
+    "http://127.0.0.1:5500", # VS Code Live Server
+    "http://localhost:5500", # VS Code Live Server
+    "*" # Permissivo para dev/teste
+]
 
 app.add_middleware(
     CORSMiddleware,
@@ -53,10 +67,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Static Files ---
+# --- Static Files (Frontend) ---
+# Mount the 'frontend' directory at the root for static access (styles, js)
 app.mount("/css", StaticFiles(directory="frontend/css"), name="css")
 app.mount("/js", StaticFiles(directory="frontend/js"), name="js")
 
+# --- Root Redirect ---
 @app.get("/")
 async def read_root():
     return FileResponse('frontend/index.html')
@@ -65,13 +81,13 @@ async def read_root():
 async def read_dashboard():
     return FileResponse('frontend/dashboard.html')
 
-# --- DB & Models ---
+# --- Pydantic Models for Input ---
 
 class CompanyInput(BaseModel):
     name: str
     cnpj: str
-    activity_code: str
-    regime: str
+    activity_code: str # CNAE
+    regime: str # e.g. "LUCRO_PRESUMIDO"
 
 class DetailedCosts(BaseModel):
     energia_eletrica: Optional[float] = 0.0
@@ -81,7 +97,7 @@ class DetailedCosts(BaseModel):
     outros: Optional[float] = 0.0
 
 class FiscalMonth(BaseModel):
-    period: str
+    period: str # "MM/YYYY"
     revenue: float
     payroll: float
     paid_amount: float
@@ -92,127 +108,76 @@ class AnalysisRequest(BaseModel):
     company: CompanyInput
     history: List[FiscalMonth]
 
+# --- Security Dependency ---
 async def verify_api_key(x_api_key: str = Header(...)):
     if x_api_key != API_KEY_SECRET:
         raise HTTPException(status_code=401, detail="Invalid API Key")
     return x_api_key
 
-# --- Helper DB Functions (SQLite) ---
+# --- Helper DB Functions ---
 def get_db_connection():
     try:
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
+        conn = psycopg2.connect(user=DB_USER, password=DB_PASS, host=DB_HOST, dbname=DB_NAME)
+        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
         return conn
     except Exception as e:
         print(f"DB Connection Error: {e}")
         return None
 
-def init_db():
-    conn = get_db_connection()
-    if not conn: return
-    cur = conn.cursor()
-    
-    # Companies
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS companies (
-            id TEXT PRIMARY KEY,
-            cnpj TEXT UNIQUE,
-            name TEXT,
-            regime TEXT,
-            activity_code TEXT,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
-    # Fiscal Data
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS fiscal_data (
-            id TEXT PRIMARY KEY,
-            company_id TEXT,
-            period_date TEXT,
-            revenue_amount REAL,
-            payroll_amount REAL,
-            tax_withholding_amount REAL,
-            operational_costs_amount REAL,
-            FOREIGN KEY(company_id) REFERENCES companies(id)
-        )
-    """)
-    
-    # AI Logs
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS ai_decision_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fiscal_data_id TEXT,
-            decision_summary TEXT,
-            risk_level TEXT,
-            confidence_score REAL,
-            applied_law_bases TEXT,
-            estimated_savings REAL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(fiscal_data_id) REFERENCES fiscal_data(id)
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-@app.on_event("startup")
-def on_startup():
-    init_db()
-
 def persist_company(conn, comp: CompanyInput):
     cur = conn.cursor()
-    # Check if exists
-    cur.execute("SELECT id FROM companies WHERE cnpj = ?", (comp.cnpj,))
-    row = cur.fetchone()
-    
-    if row:
-        comp_id = row[0]
-        cur.execute("""
-            UPDATE companies 
-            SET name = ?, regime = ?, updated_at = CURRENT_TIMESTAMP 
-            WHERE id = ?
-        """, (comp.name, comp.regime, comp_id))
-    else:
-        comp_id = str(uuid.uuid4())
-        cur.execute("""
-            INSERT INTO companies (id, cnpj, name, regime, activity_code)
-            VALUES (?, ?, ?, ?, ?)
-        """, (comp_id, comp.cnpj, comp.name, comp.regime, comp.activity_code))
-        
-    conn.commit()
-    # cur.close() # sqlite cursor doesn't strictly need close but good practice
+    query = """
+        INSERT INTO companies (id, cnpj, name, regime, activity_code)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (cnpj) DO UPDATE 
+        SET name = EXCLUDED.name, regime = EXCLUDED.regime, updated_at = NOW()
+        RETURNING id;
+    """
+    comp_id = str(uuid.uuid4())
+    # On Conflict we ideally want to get the existing ID, currently the query might return new ID or update.
+    # Simplified logic:
+    try:
+        cur.execute(query, (comp_id, comp.cnpj, comp.name, comp.regime, comp.activity_code))
+        result = cur.fetchone()
+        comp_id = result[0]
+    except Exception as e:
+        print(f"Error persisting company: {e}")
+    cur.close()
     return comp_id
 
 def persist_fiscal_data(conn, company_id: str, month_data: FiscalMonth):
     cur = conn.cursor()
-    
-    # Convert 'MM/YYYY' to 'YYYY-MM-DD' for nicer sorting if needed
-    try:
-        dt = datetime.strptime(month_data.period, "%m/%Y")
-        period_iso = dt.strftime("%Y-%m-%d")
-    except:
-        period_iso = month_data.period # Fallback
-        
-    # Sum detailed costs
+    # Corrected columns based on schema.sql
+    query = """
+        INSERT INTO fiscal_data (id, company_id, period_date, revenue_amount, payroll_amount, tax_withholding_amount, operational_costs_amount)
+        VALUES (%s, %s, TO_DATE(%s, 'MM/YYYY'), %s, %s, %s, %s)
+        RETURNING id;
+    """
+    data_id = str(uuid.uuid4())
+    # costs_json logic removed -> mapped to single operational_costs_amount for now or specific columns if schema had them.
+    # Schema has operational_costs_amount. Let's sum detailed costs.
     op_costs = 0.0
     if month_data.costs:
-        op_costs += (month_data.costs.energia_eletrica or 0)
-        op_costs += (month_data.costs.insumos_diretos or 0)
-        op_costs += (month_data.costs.aluguel_predios or 0)
-        op_costs += (month_data.costs.maquinas_equipamentos or 0)
-        op_costs += (month_data.costs.outros or 0)
-    
-    data_id = str(uuid.uuid4())
-    cur.execute("""
-        INSERT INTO fiscal_data (id, company_id, period_date, revenue_amount, payroll_amount, tax_withholding_amount, operational_costs_amount)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (data_id, company_id, period_iso, month_data.revenue, month_data.payroll, month_data.paid_amount, op_costs))
-    
-    conn.commit()
+        op_costs = sum([
+            month_data.costs.energia_eletrica or 0,
+            month_data.costs.insumos_diretos or 0,
+            month_data.costs.aluguel_predios or 0,
+            month_data.costs.maquinas_equipamentos or 0,
+            month_data.costs.outros or 0
+        ])
+
+    try:
+        cur.execute(query, (
+            data_id, company_id, month_data.period, 
+            month_data.revenue, month_data.payroll, month_data.paid_amount, 
+            op_costs
+        ))
+    except Exception as e:
+        print(f"Error persisting fiscal data: {e}")
+        # Fallback for dev if DB is strict: might fail.
+        
+    cur.close()
     return data_id
-
-
-
 
 # --- Endpoints ---
 
@@ -308,20 +273,16 @@ def get_dashboard_data():
     
     # 1. KPIs
     cur.execute("SELECT COUNT(*) FROM companies")
-    row_count = cur.fetchone()
-    total_companies = row_count[0] if row_count else 0
+    total_companies = cur.fetchone()[0]
     
     cur.execute("SELECT SUM(estimated_savings) FROM ai_decision_logs")
-    row_sum = cur.fetchone()
-    total_savings = row_sum[0] if row_sum and row_sum[0] else 0.0
+    total_savings = cur.fetchone()[0] or 0.0
     
     # 2. Risk Distribution
     cur.execute("SELECT risk_level, COUNT(*) FROM ai_decision_logs GROUP BY risk_level")
     risks = {row[0]: row[1] for row in cur.fetchall()}
     
     # 3. Recent Audits
-    # Join logic assumes ai_decision_logs links to fiscal_data links to companies
-    # Note: sqlite stores dates as strings
     query_history = """
         SELECT c.name, a.created_at, a.estimated_savings, a.risk_level
         FROM ai_decision_logs a
@@ -331,33 +292,25 @@ def get_dashboard_data():
         LIMIT 5
     """
     cur.execute(query_history)
-    recent_audits = []
-    for row in cur.fetchall():
-        # Handle date string from SQLite
-        date_str = str(row[1]) 
-        # minimal parsing
-        try:
-            # If format YYYY-MM-DD HH:MM:SS
-            d_obj = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
-            fmt_date = d_obj.strftime("%d/%m/%Y")
-        except:
-            fmt_date = date_str[:10]
-            
-        recent_audits.append({
+    recent_audits = [
+        {
             "company": row[0],
-            "date": fmt_date,
+            "date": row[1].strftime("%d/%m/%Y"),
             "savings": float(row[2] or 0),
             "risk": row[3]
-        })
+        }
+        for row in cur.fetchall()
+    ]
     
+    cur.close()
     conn.close()
     
     return {
         "kpis": {
             "companies": total_companies,
             "savings": total_savings,
-            "risk_high": risks.get('HIGH', 0) + risks.get('ALTO', 0), # Handle alias
-            "risk_low": risks.get('LOW', 0) + risks.get('BAIXO', 0)
+            "risk_high": risks.get('HIGH', 0),
+            "risk_low": risks.get('LOW', 0)
         },
         "recent_audits": recent_audits
     }
@@ -431,10 +384,7 @@ async def upload_csv(
             'Custo Energia': 'custo_energia',
             'Custo Insumos': 'custo_insumos',
             'Custo Aluguel': 'custo_aluguel',
-            'Custo Aluguel': 'custo_aluguel',
-            'Custo Aluguel Predios': 'custo_aluguel',
-            'Custo Marketing': 'custo_marketing',
-            'Despesas Propaganda': 'custo_marketing'
+            'Custo Aluguel Predios': 'custo_aluguel'
         }
         df.rename(columns=column_map, inplace=True)
         
@@ -451,7 +401,6 @@ async def upload_csv(
             if 'custo_energia' in df.columns: costs['energia_eletrica'] = float(str(row['custo_energia']).replace(',', '.')) if pd.notna(row['custo_energia']) else 0.0
             if 'custo_insumos' in df.columns: costs['insumos_diretos'] = float(str(row['custo_insumos']).replace(',', '.')) if pd.notna(row['custo_insumos']) else 0.0
             if 'custo_aluguel' in df.columns: costs['aluguel_predios'] = float(str(row['custo_aluguel']).replace(',', '.')) if pd.notna(row['custo_aluguel']) else 0.0
-            if 'custo_marketing' in df.columns: costs['outros'] = float(str(row['custo_marketing']).replace(',', '.')) if pd.notna(row['custo_marketing']) else 0.0
 
             def parse_float(val):
                 if pd.isna(val) or val == '': return 0.0
@@ -508,29 +457,7 @@ async def upload_csv(
             try:
                 from legal_advisor import LegalAdvisor
                 advisor = LegalAdvisor()
-                
-                # Determine Overall Risk by iterating opportunities
-                opportunities = analysis_result.get('opportunities', [])
-                risk_level = 'LOW'
-                opp_summaries = []
-                
-                # Precedence: HIGH > MEDIUM > LOW
-                for opp in opportunities:
-                    r = opp.get('risk', 'LOW')
-                    opp_summaries.append(f"{opp['type']} ({r})")
-                    if r == 'HIGH':
-                        risk_level = 'HIGH'
-                    elif r == 'MEDIUM' and risk_level != 'HIGH':
-                        risk_level = 'MEDIUM'
-                        
-                decision_payload = {
-                    "decision_summary": f"Oportunidades: {', '.join(opp_summaries)}"[:500],
-                    "risk_level": risk_level,
-                    "confidence_score": 0.95,
-                    "applied_law_bases": [o.get('legal_basis') for o in opportunities]
-                }
-                
-                advisor.log_decision(last_data_id, decision_payload, float(analysis_result['total_savings']))
+                advisor.log_decision(last_data_id, {}, float(analysis_result['total_savings']))
             except Exception as e:
                 print(f"Failed to log decision: {e}")
 
@@ -539,7 +466,6 @@ async def upload_csv(
             "company": company_name,
             "total_savings_potential": f"R$ {analysis_result['total_savings']:,.2f}",
             "opportunities_count": len(analysis_result['opportunities']),
-            "risk_level": risk_level if 'risk_level' in locals() else "N/A",
             "download_link": "/download-report" 
         }
 

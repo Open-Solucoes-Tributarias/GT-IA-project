@@ -55,18 +55,32 @@ class LegalAdvisor:
     def ingest_documents(self):
         """Reads PDFs from legal_docs, splits them, and creates embeddings."""
         try:
-            from langchain_community.document_loaders import PyPDFDirectoryLoader
+            from langchain_community.document_loaders import PyPDFLoader
             from langchain_text_splitters import RecursiveCharacterTextSplitter
         except ImportError:
             print("LangChain loaders missing.")
             return
 
         print(f"Scanning '{self.doc_path}' for PDFs...")
-        loader = PyPDFDirectoryLoader(self.doc_path)
-        documents = loader.load()
+        
+        documents = []
+        if not os.path.exists(self.doc_path):
+            print("Docs folder not found.")
+            return
+
+        for filename in os.listdir(self.doc_path):
+            if filename.lower().endswith(".pdf"):
+                file_path = os.path.join(self.doc_path, filename)
+                try:
+                    print(f"Loading {filename}...")
+                    loader = PyPDFLoader(file_path)
+                    docs = loader.load()
+                    documents.extend(docs)
+                except Exception as e:
+                    print(f"Failed to load {filename}: {e}")
 
         if not documents:
-            print("No documents found to ingest.")
+            print("No valid documents found to ingest.")
             return
 
         print(f"Loaded {len(documents)} document pages. Splitting...")
@@ -87,66 +101,79 @@ class LegalAdvisor:
         """
         Consults the "Brain" (LLM + VectorDB).
         """
-        if not self.vector_store:
-            return {
-                "decision_summary": "Legal Advisor offline or empty DB. Analysis skipped.",
-                "risk_level": "UNKNOWN",
-                "applied_law_bases": []
-            }
-        
         try:
-            from langchain_openai import ChatOpenAI
-            from langchain.prompts import PromptTemplate
-            from langchain.chains import RetrievalQA
-        except ImportError:
+            if not self.vector_store:
+                return {
+                    "decision_summary": "Legal Advisor offline or empty DB. Analysis skipped.",
+                    "risk_level": "UNKNOWN",
+                    "applied_law_bases": []
+                }
+            
+            result_str = ""
+
+            # Try Standard LangChain RAG
             try:
+                from langchain_openai import ChatOpenAI
                 from langchain_core.prompts import PromptTemplate
                 from langchain.chains import RetrievalQA
-                from langchain_openai import ChatOpenAI
-            except ImportError:
-                 return {"error": "LangChain modules missing for analysis."}
+                
+                # ... (Standard Implementation)
+                llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
+                retriever = self.vector_store.as_retriever(search_kwargs={"k": 3})
+                prompt_template = """You are a Senior Tax Lawyer. Context: {context}. Question: {question}. Return JSON: {{ "decision_summary": "...", "risk_level": "LOW/MEDIUM/HIGH", "confidence_score": 0.95, "applied_law_bases": ["Lei X"] }}"""
+                PROMPT = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
+                qa_chain = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", retriever=retriever, chain_type_kwargs={"prompt": PROMPT})
+                
+                print("Consulting AI Advisor (LangChain)...")
+                result_str = qa_chain.run(scenario_description)
+                
+            except ImportError as e:
+                # Fallback: Manual RAG (Direct OpenAI + Chroma)
+                print(f"LangChain Chains failed ({e}). Switching to Manual RAG.")
+                try:
+                    import openai
+                    client = openai.OpenAI()
+                    
+                    # 1. Retrieve
+                    docs = self.vector_store.similarity_search(scenario_description, k=3)
+                    context_text = "\n\n".join([d.page_content for d in docs])
+                    
+                    # 2. Generate
+                    sys_prompt = "You are a Senior Tax Lawyer. Return JSON with decision_summary, risk_level, confidence_score, applied_law_bases."
+                    user_prompt = f"Context:\n{context_text}\n\nQuestion: {scenario_description}"
+                    
+                    response = client.chat.completions.create(
+                        model="gpt-4o",
+                        messages=[
+                            {"role": "system", "content": sys_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=0
+                    )
+                    result_str = response.choices[0].message.content
+                    
+                except Exception as ex:
+                    print(f"Manual RAG Failed: {ex}")
+                    return {"error": f"Erro Crítico (Manual RAG): {ex}"}
+            except Exception as e:
+                 print(f"LangChain Execution Failed: {e}")
+                 return {"error": f"Erro Crítico (LangChain): {e}"}
 
-        # Retrieval
-        retriever = self.vector_store.as_retriever(search_kwargs={"k": 3})
-        
-        prompt_template = """
-        You are a Senior Tax Lawyer.
-        Context:
-        {context}
-        
-        Question: {question}
-        
-        Return JSON:
-        {{
-            "decision_summary": "...",
-            "risk_level": "LOW/MEDIUM/HIGH",
-            "confidence_score": 0.95,
-            "applied_law_bases": ["Lei X"]
-        }}
-        """
-        
-        PROMPT = PromptTemplate(
-            template=prompt_template, input_variables=["context", "question"]
-        )
-        
-        llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
-        
-        qa_chain = RetrievalQA.from_chain_type(
-            llm=llm,
-            chain_type="stuff",
-            retriever=retriever,
-            chain_type_kwargs={"prompt": PROMPT}
-        )
-        
-        try:
-            print("Consulting AI Advisor...")
-            result_str = qa_chain.run(scenario_description)
-            clean_json = result_str.replace("```json", "").replace("```", "").strip()
-            return json.loads(clean_json)
-        except Exception as e:
-            return {"error": f"Failed to generate analysis: {e}"}
+            # Parse JSON (Common for both methods)
+            try:
+                print(f"LLM Raw Output: {result_str}")
+                clean_json = result_str.replace("```json", "").replace("```", "").strip()
+                parsed = json.loads(clean_json)
+                return parsed
+            except Exception as e:
+                return {"decision_summary": f"Erro no Parse: {result_str}", "risk_level": "HIGH"}
 
-    def log_decision(self, fiscal_data_id: str, analysis_result: Dict[str, Any]):
+        except Exception as global_e:
+            import traceback
+            print(f"CRITICAL UNHANDLED ERROR: {traceback.format_exc()}")
+            return {"error": f"Erro Interno Fatal: {str(global_e)}"}
+
+    def log_decision(self, fiscal_data_id: str, analysis_result: Dict[str, Any], savings: float = 0.0):
         db_host = os.getenv("DB_HOST", "localhost")
         db_user = os.getenv("DB_USER", "postgres")
         db_pass = os.getenv("DB_PASS", "postgres")
@@ -156,16 +183,19 @@ class LegalAdvisor:
             conn = psycopg2.connect(user=db_user, password=db_pass, host=db_host, dbname=db_name)
             conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
             cur = conn.cursor()
-            query = """INSERT INTO ai_decision_logs (fiscal_data_id, decision_summary, risk_level, confidence_score, applied_law_bases) VALUES (%s, %s, %s, %s, %s)"""
+            query = """INSERT INTO ai_decision_logs (fiscal_data_id, decision_summary, risk_level, confidence_score, applied_law_bases, estimated_savings) VALUES (%s, %s, %s, %s, %s, %s)"""
             cur.execute(query, (
                 fiscal_data_id,
-                analysis_result.get('decision_summary', 'N/A'),
-                analysis_result.get('risk_level', 'HIGH'),
-                analysis_result.get('confidence_score', 0.0),
-                analysis_result.get('applied_law_bases', [])
+                analysis_result.get('decision_summary', 'Análise Automática'),
+                analysis_result.get('risk_level', 'LOW'), # Default to LOW if analysis didn't run fully
+                analysis_result.get('confidence_score', 1.0),
+                analysis_result.get('applied_law_bases', []),
+                savings
             ))
             cur.close()
             conn.close()
+        except Exception as e:
+            print(f"Log Decision Error: {e}")
         except Exception:
             pass # logging fail shouldn't stop flow
 

@@ -9,9 +9,12 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/chat.css">
     <!-- Font Awesome for Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
+
+
 
 <body>
 
@@ -21,7 +24,11 @@
             <div class="logo">
                 <i class="fa-solid fa-brain"></i> GT-IA
             </div>
-            <nav>
+            <nav style="display: flex; align-items: center; gap: 20px;">
+                <a href="dashboard.html"
+                    style="color: var(--primary-color); text-decoration: none; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                    <i class="fa-solid fa-chart-line"></i> Dashboard
+                </a>
                 <span id="api-status" class="status-badge"><i class="fa-solid fa-circle-notch fa-spin"></i> Verificando
                     API...</span>
             </nav>
@@ -181,6 +188,30 @@
     <footer class="container">
         <p>&copy; 2026 GT-IA Tecnologia Tributária. Todos os direitos reservados.</p>
     </footer>
+
+    <!-- Chat Widget -->
+    <div id="chat-widget" class="chat-widget closed">
+        <div class="chat-header">
+            <div class="chat-title">
+                <i class="fa-solid fa-robot"></i> Consultor IA
+            </div>
+            <button id="chat-toggle-btn" class="chat-close-btn"><i class="fa-solid fa-chevron-down"></i></button>
+        </div>
+        <div class="chat-messages" id="chat-messages">
+            <div class="message bot">
+                <p>Olá! Sou o Consultor Jurídico do GT-IA. Posso tirar dúvidas sobre legislação tributária, PIS/COFINS e
+                    jurisprudência. Como posso ajudar?</p>
+            </div>
+        </div>
+        <div class="chat-input-area">
+            <input type="text" id="chat-input" placeholder="Digite sua dúvida jurídica...">
+            <button id="chat-send-btn"><i class="fa-solid fa-paper-plane"></i></button>
+        </div>
+    </div>
+
+    <button id="chat-fab" class="chat-fab">
+        <i class="fa-solid fa-comment-dots"></i>
+    </button>
 
     <script src="js/app.js"></script>
 </body>

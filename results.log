@@ -1,0 +1,10 @@
+--- DIAGNOSTIC RESULTS ---
+INSS LP: 160000.00 | LR: 160000.00
+PIS/COFINS LP: {'pis': Decimal('33800.00'), 'cofins': Decimal('156000.00'), 'total_credits': Decimal('0.00')} | LR: {'pis': Decimal('50160.00'), 'cofins': Decimal('231040.00'), 'total_credits': Decimal('199800.00')}
+IRPJ/CSLL LP: {'irpj': Decimal('414000.00'), 'csll': Decimal('149760.00')} | LR: {'irpj': Decimal('558000.00'), 'csll': Decimal('201600.00')}
+ISS: 260000.00
+TOTAL TAX LP: 1173560.00
+TOTAL TAX LR: 1460800.00
+USER PAID: 350000.00
+OPTIMAL: LUCRO PRESUMIDO
+DIFF (Paid - Optimal): -823560.00

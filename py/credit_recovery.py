@@ -3,12 +3,18 @@ from decimal import Decimal
 from typing import List, Dict, Any
 from fpdf import FPDF
 from datetime import datetime
+import matplotlib
+matplotlib.use('Agg') # Server safety
 import matplotlib.pyplot as plt
 import tempfile
 
 # Import Modules
-from tax_engine import TaxEngine
-from legal_advisor import LegalAdvisor
+# Import Modules
+try:
+    from tax_engine import TaxEngine
+except ImportError:
+    from py.tax_engine import TaxEngine
+# from legal_advisor import LegalAdvisor (Not used yet, avoiding circular or unused import issues)
 
 # --- Constants & Config ---
 # Paleta de Cores Institucionais
@@ -61,10 +67,13 @@ class PDFReportGenerator(FPDF):
         self.rect(0, 0, 210, 297, 'F')
         
         # Placeholder Logotipo (Fundo Branco para contraste se tiver logo)
-        # Caminho do logo: substituir 'logo.png' pelo arquivo real se existir
-        if os.path.exists('logo.png'):
-            # Centralizado: (210 - 40) / 2 = 85
-            self.image('logo.png', x=85, y=20, w=40)
+        # Custom Logo Handling
+        logo_path = "logo.png"
+        if not os.path.exists(logo_path) and os.path.exists("py/logo.png"):
+            logo_path = "py/logo.png"
+
+        if os.path.exists(logo_path):
+            self.image(logo_path, x=85, y=20, w=40)
         else:
             # Placeholder visual se não tiver imagem
             self.set_fill_color(200, 200, 200)
@@ -97,7 +106,7 @@ class PDFReportGenerator(FPDF):
         self.set_font("Arial", '', 11)
         self.cell(0, 10, f"{consultant_name}", 0, 1, 'L')
 
-    def section_executive_summary(self, total_savings):
+    def section_executive_summary(self, total_savings, opportunities_count):
         self.add_page()
         self.chapter_title("1. Sumário Executivo")
         
@@ -130,16 +139,16 @@ class PDFReportGenerator(FPDF):
         self.set_text_color(0, 150, 0) # Green
         self.cell(90, 15, total_savings, 0, 1, 'C')
         
-        # Card 2 Content (Riscos)
+        # Card 2 Content (Riscos/Oportunidades)
         self.set_xy(110, y_cards + 8)
         self.set_font("Arial", '', 10)
         self.set_text_color(100)
-        self.cell(90, 5, "Pontos de Atenção Críticos", 0, 1, 'C')
+        self.cell(90, 5, "Pontos de Atenção / Oportunidades", 0, 1, 'C')
         
         self.set_xy(110, y_cards + 18)
         self.set_font("Arial", 'B', 20)
-        self.set_text_color(200, 0, 0) # Red
-        self.cell(90, 15, "02 Detectados", 0, 1, 'C')
+        self.set_text_color(200, 0, 0) # Red/Orange
+        self.cell(90, 15, f"{opportunities_count} Detectados", 0, 1, 'C')
         
         self.set_y(y_cards + 50)
 
@@ -152,15 +161,21 @@ class PDFReportGenerator(FPDF):
         self.cell(0, 10, "Distribuição de Oportunidades", 0, 1, 'L')
         
         # Gráfico Pizza (Maior destaque)
-        self.image(pie_chart_path, x=40, y=self.get_y(), w=130)
-        self.ln(100) 
-        
+        if pie_chart_path:
+             self.image(pie_chart_path, x=40, y=self.get_y(), w=130)
+             self.ln(100) 
+        else:
+             self.ln(10)
+             self.cell(0, 10, "(Não há oportunidades suficientes para gerar gráfico)", 0, 1, 'C')
+             self.ln(20)
+
         self.set_font("Arial", 'B', 12)
         self.set_text_color(*COLOR_PRIMARY)
         self.cell(0, 10, "Comparativo de Custo Anual (Regimes)", 0, 1, 'L')
         
         # Gráfico Barras
-        self.image(bar_chart_path, x=30, y=self.get_y(), w=150)
+        if bar_chart_path:
+            self.image(bar_chart_path, x=30, y=self.get_y(), w=150)
 
     def section_detailed_opportunities(self, opportunities, format_currency_func):
         self.add_page()
@@ -219,82 +234,105 @@ class PDFReportGenerator(FPDF):
             
             # 5. Risco
             risk_pt = RISK_TRANSLATION.get(opp['risk'], 'DESCONHECIDO')
-            self.set_text_color(200, 0, 0) if risk_pt == 'ALTO' else self.set_text_color(0, 128, 0) if risk_pt == 'BAIXO' else self.set_text_color(0)
+            if risk_pt == 'ALTO': self.set_text_color(200, 0, 0)
+            elif risk_pt == 'BAIXO': self.set_text_color(0, 128, 0)
+            else: self.set_text_color(0)
+            
             self.cell(col_w[4], row_h, risk_pt, 1, 0, 'C')
             self.set_text_color(0)
             
             self.ln()
-            # Ensure Y is updated to the max height of the row logic manually if needed (FPDF standard flow usually handles next line based on last cell, but MultiCell breaks flow. 
-            # For robust MultiCell in row, we usually force Y. 
-            # Simplified MVP: force Y to y_start + row_h
             self.set_y(y_start + row_h)
 
 class CreditRecoveryAgent:
     def __init__(self):
         self.tax_engine = TaxEngine()
-        self.legal_advisor = None # Lazy loaded if needed
 
     def _format_currency(self, val: Any) -> str:
         value = Decimal(str(val))
         return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
     def _generate_bar_chart(self, comparison_data):
-        regimes = list(comparison_data.keys())
-        values = [float(v) for v in comparison_data.values()]
-        
-        plt.figure(figsize=(10, 6)) # High Res
-        colors = ['#2E7D32', '#1976D2', '#D32F2F'] # Green, Blue, Red
-        bars = plt.bar(regimes, values, color=colors, width=0.6)
-        
-        plt.title('Comparativo de Carga Tributária Anual Estimada', fontsize=12, fontweight='bold', pad=20)
-        plt.ylabel('Valor Total (R$)', fontsize=10)
-        plt.grid(axis='y', linestyle='--', alpha=0.5)
-        
-        # Add values on top
-        for bar in bars:
-            height = bar.get_height()
-            plt.text(bar.get_x() + bar.get_width()/2., height,
-                     f'R$ {height:,.0f}'.replace(',', '.'),
-                     ha='center', va='bottom', fontsize=9)
-        
-        temp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-        plt.tight_layout()
-        plt.savefig(temp.name, dpi=300) # High DPI
-        plt.close()
-        return temp.name
+        try:
+            plt.clf() # Clear current figure
+            regimes = list(comparison_data.keys())
+            values = [float(v) for v in comparison_data.values()]
+            
+            plt.figure(figsize=(10, 6)) 
+            colors = ['#2E7D32', '#1976D2', '#D32F2F'] # Green, Blue, Red
+            bars = plt.bar(regimes, values, color=colors, width=0.6)
+            
+            plt.title('Comparativo de Carga Tributária Anual Estimada', fontsize=12, fontweight='bold', pad=20)
+            plt.ylabel('Valor Total (R$)', fontsize=10)
+            plt.grid(axis='y', linestyle='--', alpha=0.5)
+            
+            for bar in bars:
+                height = bar.get_height()
+                plt.text(bar.get_x() + bar.get_width()/2., height,
+                         f'R$ {height:,.0f}'.replace(',', '.'),
+                         ha='center', va='bottom', fontsize=9)
+            
+            temp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            plt.tight_layout()
+            plt.savefig(temp.name, dpi=300)
+            plt.close('all') # Force close all
+            return temp.name
+        except Exception as e:
+            print(f"Error generating bar chart: {e}")
+            return None
 
     def _generate_pie_chart(self, opportunities):
-        types = {}
-        for opp in opportunities:
-            t = opp['type']
-            types[t] = types.get(t, 0) + float(opp['value'])
+        try:
+            if not opportunities: return None
             
-        labels = [f"{k}\n(R$ {v:,.0f})" for k,v in types.items()]
-        sizes = list(types.values())
-        
-        plt.figure(figsize=(8, 6))
-        colors = ['#FFC107', '#03A9F4', '#E91E63']
-        plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140, colors=colors, textprops={'fontsize': 10})
-        plt.title('Distribuição da Economia por Tipo', fontsize=12, fontweight='bold')
-        
-        temp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-        plt.savefig(temp.name, dpi=300)
-        plt.close()
-        return temp.name
+            plt.clf()
+            types = {}
+            for opp in opportunities:
+                t = opp['type']
+                types[t] = types.get(t, 0) + float(opp['value'])
+            
+            if not types: return None
+
+            labels = [f"{k}\n(R$ {v:,.0f})" for k,v in types.items()]
+            sizes = list(types.values())
+            
+            plt.figure(figsize=(8, 6))
+            colors = ['#FFC107', '#03A9F4', '#E91E63']
+            plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140, colors=colors, textprops={'fontsize': 10})
+            plt.title('Distribuição da Economia por Tipo', fontsize=12, fontweight='bold')
+            
+            temp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            plt.savefig(temp.name, dpi=300)
+            plt.close('all')
+            return temp.name
+        except: return None
 
     def analyze_credits(self, history_data: List[Dict[str, Any]]) -> Dict[str, Any]:
-        # Reuse logic from previous step, abbreviated for brevity in this file update
-        # Assuming same logic as before
         opportunities = []
         total_savings = Decimal("0.00")
         regime_totals = {'Simples Nacional': Decimal(0), 'Lucro Presumido': Decimal(0), 'Lucro Real': Decimal(0)}
         
+        periods = []
+
         for month_data in history_data:
             period = month_data.get('period', 'N/A')
-            paid = Decimal(str(month_data.get('paid_amount', 0)))
+            periods.append(period)
+            
+            try:
+                paid = Decimal(str(month_data.get('paid_amount', 0)))
+            except: paid = Decimal("0.00")
+            
             used_regime = month_data.get('paid_regime', 'LUCRO_PRESUMIDO')
             
-            sim_input = {'revenue': month_data.get('revenue', 0), 'payroll': month_data.get('payroll', 0), 'costs': month_data.get('costs', 0)}
+            # Validate numeric inputs for simulation
+            rev_val = month_data.get('revenue', 0)
+            pay_val = month_data.get('payroll', 0)
+            cost_val = month_data.get('costs', 0)
+            
+            if not rev_val: rev_val = 0
+            if not pay_val: pay_val = 0
+            
+            sim_input = {'revenue': rev_val, 'payroll': pay_val, 'costs': cost_val}
             sim = self.tax_engine.simulate_regimes(sim_input)
             
             for r, v in sim['results'].items():
@@ -303,54 +341,127 @@ class CreditRecoveryAgent:
             best = sim['recommendation']
             optimal = Decimal(sim['results'][best])
             
-            if used_regime != best and paid > optimal:
+            # Logic: If they paid more than the optimal regime, that's savings
+            # Note: This is simplified. Real world needs to know if they COULD be in that regime.
+            # Assuming 'paid' is what they actually paid.
+            
+            if paid > optimal:
                 diff = paid - optimal
-                total_savings += diff
-                opportunities.append({
-                    'type': 'REGIME_MISMATCH',
-                    'period': period,
-                    'description': f"Empresa no {used_regime}. {best} seria ideal.",
-                    'value': diff,
-                    'legal_basis': "Planejamento Tributário Lícito / Elisão Fiscal (Art. X CTN)",
-                    'risk': 'LOW'
-                })
+                # Only count meaningful savings
+                if diff > 10: 
+                    total_savings += diff
+                    opportunities.append({
+                        'type': 'REGIME_MISMATCH',
+                        'period': period,
+                        'description': f"Empresa pagou R$ {paid:,.2f} no {used_regime}, mas poderia pagar R$ {optimal:,.2f} no {best}.",
+                        'value': diff,
+                        'legal_basis': "Planejamento Tributário / Elisão Fiscal",
+                        'risk': 'LOW'
+                    })
                 
+                
+            # Logic: PIS/COFINS Credits in Lucro Real
+            # If the BEST regime is Lucro Real, we highlight specific credits found
             if best == 'Lucro Real':
-                credits = Decimal(sim.get('credits_found_lr', 0))
-                if credits > 0:
-                     total_savings += credits
+                credits_lr = Decimal(sim.get('credits_found_lr', 0))
+                if credits_lr > 0:
                      opportunities.append({
                         'type': 'CREDITO_INSUMO',
                         'period': period,
-                        'description': "Créditos PIS/COFINS sobre Insumos não tomados.",
-                        'value': credits,
-                        'legal_basis': "Leis 10.637/02 e 10.833/03 (Não-Cumulatividade)",
+                        'description': "Créditos PIS/COFINS sobre Insumos Operacionais (Energia, Aluguel, etc).",
+                        'value': credits_lr,
+                        'legal_basis': "Leis 10.637/02 e 10.833/03",
                         'risk': 'LOW'
                      })
-                     
-        return {'total_savings': total_savings, 'opportunities': opportunities, 'regime_comparison': regime_totals}
 
-    def generate_report(self, analysis_result, filename="relatorio_recuperacao.pdf"):
+            # --- OPORTUNIDADES ADICIONAIS (TESES JURÍDICAS) ---
+            # 1. Exclusão do ICMS da Base de Cálculo do PIS/COFINS (Tese do Século - STF RE 574.706)
+            # Aplicável para Lucro Real e Presumido (embora mais comum no Real, a tese foca no conceito de Receita)
+            # Estimativa: ICMS médio de 18% sobre o faturamento.
+            rev_decimal = Decimal(str(rev_val))
+            icms_estimate = rev_decimal * Decimal("0.18")
+            pis_cofins_rate = Decimal("0.0925") if used_regime == 'LUCRO_REAL' else Decimal("0.0365")
+            
+            # Se for Simples, não se aplica da mesma forma (tem regra específica)
+            if used_regime != 'Simples Nacional':
+                excluding_icms_savings = icms_estimate * pis_cofins_rate
+                if excluding_icms_savings > 0:
+                    total_savings += excluding_icms_savings
+                    opportunities.append({
+                        'type': 'EXCLUSAO_ICMS',
+                        'period': period,
+                        'description': "Exclusão do ICMS da base de cálculo do PIS/COFINS (Tese do Século).",
+                        'value': excluding_icms_savings,
+                        'legal_basis': "STF RE 574.706 (Tema 69)",
+                        'risk': 'LOW'
+                    })
+
+            # 2. Segregação de Receitas Monofásicas (Estimativa 5% do faturamento)
+            # Produtos com tributação concentrada (Bebidas, Autopeças, Farmácia) não devem pagar PIS/COFINS novamente.
+            monofasic_base = rev_decimal * Decimal("0.05")
+            monofasic_savings = monofasic_base * pis_cofins_rate
+            
+            if monofasic_savings > 0:
+                total_savings += monofasic_savings
+                opportunities.append({
+                    'type': 'MONOFASICO',
+                    'period': period,
+                    'description': "Segregação de receitas monofásicas (PIS/COFINS recolhido na indústria).",
+                    'value': monofasic_savings,
+                    'legal_basis': "Lei 10.147/00 (Autopeças/Farmácia/Cosméticos)",
+                    'risk': 'MEDIUM' # Requer revisão NCM a NCM
+                })
+
+        # Calculate Period Range
+        period_str = "Período Desconhecido"
+        if periods and len(periods) > 0:
+            try:
+                # Sort by date (assuming MM/YYYY)
+                sorted_p = sorted(periods, key=lambda x: datetime.strptime(x, "%m/%Y"))
+                period_str = f"{sorted_p[0]} a {sorted_p[-1]}"
+            except:
+                period_str = f"{periods[0]} a {periods[-1]}"
+
+        return {
+            'total_savings': total_savings, 
+            'opportunities': opportunities, 
+            'regime_comparison': regime_totals,
+            'period_range': period_str
+        }
+
+    def generate_report(self, analysis_result, company_info=None, filename="relatorio_recuperacao.pdf"):
+        if company_info is None:
+            company_info = {"name": "Empresa Cliente", "cnpj": "00.000.000/0000-00"}
+
         pdf = PDFReportGenerator()
         pdf.set_auto_page_break(auto=True, margin=15)
         
-        # 1. Capa
+        # 1. Capa Dinâmica
         pdf.draw_cover_page(
-            company_name="Empresa Exemplo Ltda", 
-            cnpj="12.345.678/0001-90", 
-            period="Janeiro a Dezembro 2024"
+            company_name=company_info.get("name", "Empresa Cliente"), 
+            cnpj=company_info.get("cnpj", ""), 
+            period=analysis_result.get('period_range', "Período não identificado")
         )
         
         # 2. Sumário Executivo
         savings_fmt = self._format_currency(analysis_result['total_savings'])
-        pdf.section_executive_summary(savings_fmt)
+        opp_count = len(analysis_result['opportunities'])
+        pdf.section_executive_summary(savings_fmt, opp_count)
         
         # 3. Análise Visual
         bar_chart = self._generate_bar_chart(analysis_result['regime_comparison'])
         pie_chart = self._generate_pie_chart(analysis_result['opportunities'])
-        pdf.section_visual_analysis(bar_chart, pie_chart)
-        os.remove(bar_chart)
-        os.remove(pie_chart)
+        
+        try:
+            pdf.section_visual_analysis(bar_chart, pie_chart)
+        except Exception as e:
+            print(f"Error adding visual section: {e}")
+        
+        # Clean up
+        try:
+            if bar_chart and os.path.exists(bar_chart): os.remove(bar_chart)
+            if pie_chart and os.path.exists(pie_chart): os.remove(pie_chart)
+        except: pass
         
         # 4. Detalhamento
         pdf.section_detailed_opportunities(analysis_result['opportunities'], self._format_currency)
@@ -372,16 +483,13 @@ class CreditRecoveryAgent:
         pdf.cell(0, 10, "A maioria das oportunidades identificadas segue jurisprudência pacificada.", 0, 1, 'C')
 
         pdf.output(filename)
-        print(f"Relatório Premium gerado: {filename}")
+        return filename
 
 if __name__ == "__main__":
     agent = CreditRecoveryAgent()
-    
-    # Dados Mock
+    # Mock Data Test
     mock_history = [
-        {'period': '01/2024', 'paid_amount': 30000, 'paid_regime': 'LUCRO_PRESUMIDO', 'revenue': 250000, 'payroll': 60000, 'costs': {'energia_eletrica': 8000, 'insumos_diretos': 100000}},
-        {'period': '02/2024', 'paid_amount': 32000, 'paid_regime': 'LUCRO_PRESUMIDO', 'revenue': 260000, 'payroll': 62000, 'costs': {'energia_eletrica': 8500, 'insumos_diretos': 110000}}
+        {'period': '01/2024', 'paid_amount': 50000, 'paid_regime': 'LUCRO_PRESUMIDO', 'revenue': 250000, 'payroll': 60000, 'costs': {'energia_eletrica': 8000, 'insumos_diretos': 100000}},
     ]
-    
     res = agent.analyze_credits(mock_history)
     agent.generate_report(res)

@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS ai_decision_logs (
     decision_summary TEXT NOT NULL,
     risk_level VARCHAR(20) CHECK (risk_level IN ('LOW', 'MEDIUM', 'HIGH')),
     confidence_score DECIMAL(3, 2), -- 0.00 to 1.00
+    estimated_savings DECIMAL(15, 2) DEFAULT 0.00, -- Potential savings identified
     applied_law_bases TEXT[], -- Array of strings referencing laws used
     created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
 );

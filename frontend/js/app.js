@@ -80,7 +80,11 @@ function setupEventListeners() {
     });
 
     // Form Submit
+    // Form Submit
     document.getElementById('audit-form').addEventListener('submit', handleAuditSubmit);
+
+    // Initialize Chat
+    if (document.getElementById('chat-widget')) setupChat();
 }
 
 async function handleAuditSubmit(e) {
@@ -187,5 +191,100 @@ async function runProgressAnimation() {
         await new Promise(r => setTimeout(r, 800 + Math.random() * 700));
 
         el.querySelector('i').className = "fa-solid fa-check-circle";
+    }
+}
+
+// Chat Logic
+function setupChat() {
+    const chatWidget = document.getElementById('chat-widget');
+    const fab = document.getElementById('chat-fab');
+    const toggleBtn = document.getElementById('chat-toggle-btn');
+    const sendBtn = document.getElementById('chat-send-btn');
+    const chatInput = document.getElementById('chat-input');
+    const messagesContainer = document.getElementById('chat-messages');
+
+    // Toggle
+    function toggleChat() {
+        chatWidget.classList.toggle('closed');
+        if (!chatWidget.classList.contains('closed')) {
+            setTimeout(() => chatInput.focus(), 300);
+        }
+    }
+
+    fab.addEventListener('click', toggleChat);
+    toggleBtn.addEventListener('click', toggleChat);
+
+    // Send Message
+    async function sendMessage() {
+        const text = chatInput.value.trim();
+        if (!text) return;
+
+        // User Message
+        appendMessage(text, 'user');
+        chatInput.value = '';
+        chatInput.disabled = true;
+
+        // Bot Loading
+        const loadingId = appendMessage('<i class="fa-solid fa-circle-notch fa-spin"></i> Consultando legislação...', 'bot');
+
+        try {
+            const response = await fetch(`${API_URL}/ask-legal`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': API_KEY
+                },
+                body: JSON.stringify({ question: text })
+            });
+
+            const data = await response.json();
+
+            // Remove Loading
+            const loadingEl = document.getElementById(loadingId);
+            if (loadingEl) loadingEl.remove();
+
+            if (data.error) {
+                console.error("Chat Error:", data.error);
+                appendMessage(`⚠️ <strong>Erro no Sistema:</strong> ${data.error}`, 'bot');
+            } else {
+                let answer = `<strong>${data.decision_summary || "Análise concluída."}</strong>`;
+
+                if (data.applied_law_bases && data.applied_law_bases.length > 0) {
+                    answer += `<br><br><small><strong>Base Legal:</strong> ${data.applied_law_bases.join(', ')}</small>`;
+                }
+
+                if (data.risk_level) {
+                    const riskColor = data.risk_level === 'HIGH' ? 'red' : (data.risk_level === 'MEDIUM' ? 'orange' : 'green');
+                    answer += `<br><small style="color:${riskColor}"><strong>Risco: ${data.risk_level}</strong></small>`;
+                }
+
+                appendMessage(answer, 'bot');
+            }
+
+        } catch (error) {
+            console.error(error);
+            const loadingEl = document.getElementById(loadingId);
+            if (loadingEl) loadingEl.remove();
+            appendMessage("Erro de conexão com o consultor.", 'bot');
+        } finally {
+            chatInput.disabled = false;
+            chatInput.focus();
+        }
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+    chatInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendMessage();
+    });
+
+    function appendMessage(html, sender) {
+        const div = document.createElement('div');
+        div.className = `message ${sender}`;
+        div.innerHTML = sender === 'user' ? `<p>${html}</p>` : `<p>${html}</p>`;
+        const id = 'msg-' + Date.now();
+        div.id = id;
+        messagesContainer.appendChild(div);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        return id;
     }
 }

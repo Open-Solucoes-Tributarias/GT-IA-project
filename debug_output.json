@@ -1,0 +1,11 @@
+{
+  "decision_summary": "Os impostos que incidem sobre a folha de pagamento incluem a Contribuição Social sobre o Lucro Líquido (CSLL), a COFINS e a contribuição para o PIS/PASEP, conforme estabelecido pela Medida Provisória nº 232, de 2004. Além disso, há a retenção do imposto de renda na fonte para pessoas jurídicas sujeitas a alíquotas específicas.",
+  "risk_level": "Médio",
+  "confidence_score": 0.85,
+  "applied_law_bases": [
+    "Medida Provisória nº 232, de 2004",
+    "Lei nº 10.865, de 2004",
+    "Lei nº 14.592, de 2023",
+    "Emenda Constitucional nº 20, de 1998"
+  ]
+}

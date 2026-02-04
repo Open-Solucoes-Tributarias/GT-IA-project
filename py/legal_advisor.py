@@ -99,17 +99,41 @@ class LegalAdvisor:
 
     def analyze_scenario(self, scenario_description: str) -> Dict[str, Any]:
         """
-        Consults the "Brain" (LLM + VectorDB).
+        Consultoria Jurídica via RAG com Triagem de Complexidade.
+        Alinhado ao suporte didático da Open Soluções Tributárias.
         """
         try:
             if not self.vector_store:
                 return {
-                    "decision_summary": "Legal Advisor offline or empty DB. Analysis skipped.",
+                    "decision_summary": "Advisor Offline: Base de dados jurídica não carregada.",
                     "risk_level": "UNKNOWN",
-                    "applied_law_bases": []
+                    "requires_human_if": True
                 }
             
             result_str = ""
+            
+            # Prompt ajustado para o estilo 'Educativo/Consultivo' da Open
+            prompt_core = """
+            Você é um Consultor Sênior da Open Soluções Tributárias.
+            Seu objetivo é fornecer segurança jurídica prática sobre retenções tributárias e legislação.
+            
+            Contexto Legal: {context}
+            Pergunta/Cenário: {question}
+            
+            Instruções:
+            1. Seja didático: explique o "porquê" da retenção ou regra.
+            2. Se houver divergência ou ambiguidade alta, defina 'requires_human_if' como true.
+            3. Cite as Instruções Normativas (ex: IN 2110, IN 1911) ou Leis específicas se souber.
+            
+            Retorne um JSON estrito:
+            {{
+              "decision_summary": "Explicação clara e didática...",
+              "risk_level": "LOW/MEDIUM/HIGH",
+              "confidence_score": 0.0 a 1.0,
+              "applied_law_bases": ["Lei/Artigo X"],
+              "requires_human_if": true/false
+            }}
+            """
 
             # Try Standard LangChain RAG
             try:
@@ -117,11 +141,10 @@ class LegalAdvisor:
                 from langchain_core.prompts import PromptTemplate
                 from langchain.chains import RetrievalQA
                 
-                # ... (Standard Implementation)
                 llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
                 retriever = self.vector_store.as_retriever(search_kwargs={"k": 3})
-                prompt_template = """You are a Senior Tax Lawyer. Context: {context}. Question: {question}. Return JSON: {{ "decision_summary": "...", "risk_level": "LOW/MEDIUM/HIGH", "confidence_score": 0.95, "applied_law_bases": ["Lei X"] }}"""
-                PROMPT = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
+                
+                PROMPT = PromptTemplate(template=prompt_core, input_variables=["context", "question"])
                 qa_chain = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", retriever=retriever, chain_type_kwargs={"prompt": PROMPT})
                 
                 print("Consulting AI Advisor (LangChain)...")
@@ -139,8 +162,8 @@ class LegalAdvisor:
                     context_text = "\n\n".join([d.page_content for d in docs])
                     
                     # 2. Generate
-                    sys_prompt = "You are a Senior Tax Lawyer. Return JSON with decision_summary, risk_level, confidence_score, applied_law_bases."
-                    user_prompt = f"Context:\n{context_text}\n\nQuestion: {scenario_description}"
+                    sys_prompt = "You are a Senior Tax Lawyer for Open Soluções Tributárias. Return strict JSON."
+                    user_prompt = prompt_core.format(context=context_text, question=scenario_description)
                     
                     response = client.chat.completions.create(
                         model="gpt-4o",
@@ -154,24 +177,31 @@ class LegalAdvisor:
                     
                 except Exception as ex:
                     print(f"Manual RAG Failed: {ex}")
-                    return {"error": f"Erro Crítico (Manual RAG): {ex}"}
+                    return {"error": f"Erro Crítico (Manual RAG): {ex}", "requires_human_if": True}
             except Exception as e:
                  print(f"LangChain Execution Failed: {e}")
-                 return {"error": f"Erro Crítico (LangChain): {e}"}
+                 return {"error": f"Erro Crítico (LangChain): {e}", "requires_human_if": True}
 
             # Parse JSON (Common for both methods)
             try:
                 print(f"LLM Raw Output: {result_str}")
                 clean_json = result_str.replace("```json", "").replace("```", "").strip()
                 parsed = json.loads(clean_json)
+                
+                # Triagem Automática de Complexidade:
+                # Se o score de confiança for baixo ou o risco for alto, exige IF (Informação Fiscal/Humana)
+                if parsed.get("confidence_score", 1.0) < 0.7 or parsed.get("risk_level") == "HIGH":
+                    parsed["requires_human_if"] = True
+                    parsed["decision_summary"] += " [Nota: Este caso foi sinalizado para triagem humana devido à sua complexidade técnica.]"
+                
                 return parsed
             except Exception as e:
-                return {"decision_summary": f"Erro no Parse: {result_str}", "risk_level": "HIGH"}
+                return {"decision_summary": f"Erro no Parse do JSON: {result_str}", "risk_level": "HIGH", "requires_human_if": True}
 
         except Exception as global_e:
             import traceback
             print(f"CRITICAL UNHANDLED ERROR: {traceback.format_exc()}")
-            return {"error": f"Erro Interno Fatal: {str(global_e)}"}
+            return {"error": f"Erro Interno Fatal: {str(global_e)}", "requires_human_if": True}
 
     def log_decision(self, fiscal_data_id: str, analysis_result: Dict[str, Any], savings: float = 0.0):
         # Default to SQLite file

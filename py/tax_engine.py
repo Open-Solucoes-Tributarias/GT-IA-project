@@ -234,6 +234,66 @@ class TaxEngine:
             'savings': str((max(regimes.values()) - min(regimes.values())).quantize(Decimal("0.01")))
         }
 
+    # --- NOVOS MÉTODOS (FOCO OPEN SOLUÇÕES TRIBUTÁRIAS) ---
+    # Este bloco foca no core da Open: Retenções e Encargos de Terceiros
+
+    def calculate_retentions_on_invoice(self, 
+                                     service_value: float, 
+                                     provider_regime: str, 
+                                     is_public_entity: bool = False,
+                                     city_iss_rate: float = 5.0) -> Dict[str, Any]:
+        """
+        Realiza o Diagnóstico de Entrada: identifica retenções obrigatórias por nota fiscal.
+        Alinhado ao sistema Gestão Tributária (GT) da Open.
+        """
+        val = self._to_decimal(service_value)
+        
+        # Alíquotas baseadas nas normas de retenção (INSS, IRRF, CSRF)
+        rates = {
+            "CSRF": Decimal("0.0465"), # PIS (0,65%) + COFINS (3,0%) + CSLL (1,0%)
+            "INSS_RET": Decimal("0.11"),
+            "IRRF_SRV": Decimal("0.015")
+        }
+
+        results = {
+            "base_value": val,
+            "retentions": {},
+            "total_liquid": val,
+            "warnings": []
+        }
+
+        # Regra de Retenção para Simples Nacional (Geralmente dispensada para CSRF/IRRF)
+        # Normalizando provider_regime para evitar erros de case/formato
+        norm_regime = provider_regime.upper().replace(' ', '_')
+        if "SIMPLES" in norm_regime:
+            results["retentions"]["CSRF"] = Decimal("0.00")
+            results["retentions"]["IRRF"] = Decimal("0.00")
+            results["warnings"].append("Prestador Simples Nacional: Dispensada retenção de IRRF/CSRF conforme IN RFB.")
+        else:
+            # Cálculo de CSRF com verificação de limite de R$ 10,00 para dispensa
+            csrf_calc = (val * rates["CSRF"]).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if csrf_calc < Decimal("10.00"):
+                results["retentions"]["CSRF"] = Decimal("0.00")
+                results["warnings"].append("Valor de CSRF abaixo de R$ 10,00: Retenção dispensada.")
+            else:
+                results["retentions"]["CSRF"] = csrf_calc
+            
+            # IRRF (1,5% padrão para serviços profissionais)
+            results["retentions"]["IRRF"] = (val * rates["IRRF_SRV"]).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        # Retenção de INSS (Lei 8.212/91 - 11% sobre cessão de mão de obra)
+        results["retentions"]["INSS"] = (val * rates["INSS_RET"]).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        # ISS (Município - Variável de 2% a 5%)
+        iss_rate = self._to_decimal(city_iss_rate) / Decimal("100")
+        results["retentions"]["ISS"] = (val * iss_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        # Cálculo do Valor Líquido Final
+        total_retentions = sum(results["retentions"].values())
+        results["total_liquid"] = val - total_retentions
+        
+        return results
+
 if __name__ == "__main__":
     engine = TaxEngine()
     
